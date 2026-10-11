@@ -1,5 +1,26 @@
 # Isaac ROS FoundationPose セットアップ手順
 
+> **状態**: Quickstart は動作確認済み（2026-09）／実カメラ入力は調整中
+> **対象**: Isaac ROS 4.6 / ROS 2 Jazzy / イメージ `isaac-ros-4.6-base`（Ubuntu 24.04）
+> **関連**: 環境・構成の全体像は [ルート README](../README.md)、仕組みの調査記録は [catch-up](../catch-up/pose_estimation.md)
+
+**この文書の読み方**
+
+* 各コマンドブロックに **コンテナ内 / コンテナ外** を明記している。NGC からのアセット・モデル取得は **コンテナ外**、`apt` / `colcon` / 起動は **コンテナ内** で実行する。
+* `${ISAAC_ROS_WS}` はホスト側のワークスペースパス。コンテナ内では `/workspaces/isaac_ros-dev` に対応する。
+* 章の役割は次のとおり。
+
+| 章 | 内容 |
+| --- | --- |
+| 1 | 前提（バージョン・使うモデル・入出力トピック） |
+| 2〜3 | FoundationPose のアセットと ONNX モデルの取得 |
+| 4 | FoundationPose パッケージのインストール（バイナリ / ソースビルド） |
+| 5 | TensorRT Engine（`.plan`）の作成 |
+| 6〜8 | 前段の RT-DETR と Isaac ROS Examples の準備 |
+| 9〜11 | Quickstart の起動・bag 再生・RViz2 での確認 |
+| 12 | 実環境に移すときに効く注意点 |
+| 13 | 実カメラ入力用の自作 launch（`custom_pose_bringup`） |
+
 ## 1. 前提
 
 * Isaac ROS **FoundationPose**
@@ -426,9 +447,77 @@ FoundationPoseではRGB画像とDepth画像が同一座標系で対応してい�
 
 そのため，実際にFoundationPoseを動かすGPU環境でEngineを生成する．
 
-# 13. カスタム
+# 13. 実カメラ入力（custom_pose_bringup）
+
+Quickstart の bag ではなく，実カメラの Topic をそのまま流し込むための自作パッケージが
+`isaac_ros-dev/src/custom_pose_bringup/` である．
+
+## 13.1 ビルド（コンテナ内）
+
 ```bash
-cd /workspaces/isaac_ros-dev
+cd ${ISAAC_ROS_WS}
+colcon build --symlink-install --packages-select custom_pose_bringup
 source install/setup.bash
+```
+
+## 13.2 起動（コンテナ内）
+
+```bash
+ros2 launch custom_pose_bringup head_camera_foundationpose.launch.py
+```
+
+パッケージとして認識されない場合は，パス指定で同じ launch を実行できる．
+
+```bash
 ros2 launch src/custom_pose_bringup/launch/head_camera_foundationpose.launch.py
 ```
+
+## 13.3 Launch Argument
+
+| 引数 | 既定値 | 内容 |
+| --- | --- | --- |
+| `mesh_file_path` | `.../isaac_ros_assets/isaac_ros_foundationpose/Mustard/textured_simple.obj` | FoundationPose が使う 3D メッシュ．実対象物に差し替える |
+| `refine_engine_file_path` | `.../isaac_ros_assets/models/foundationpose/refine_trt_engine.plan` | Refine ネットワークの TensorRT Engine |
+| `score_engine_file_path` | `.../isaac_ros_assets/models/foundationpose/score_trt_engine.plan` | Score ネットワークの TensorRT Engine |
+| `rt_detr_engine_file_path` | `.../isaac_ros_assets/models/synthetica_detr/sdetr_grasp.plan` | RT-DETR の TensorRT Engine |
+
+指定方法（`:=` で上書き）:
+
+```bash
+ros2 launch custom_pose_bringup head_camera_foundationpose.launch.py \
+    mesh_file_path:=/workspaces/isaac_ros-dev/isaac_ros_assets/<object>/model.obj
+```
+
+## 13.4 入出力 Topic
+
+入力（実カメラ側が publish していること）:
+
+| 役割 | トピック |
+| --- | --- |
+| RGB | `/head_camera/color/image_raw` |
+| CameraInfo | `/head_camera/color/camera_info` |
+| Depth（32FC1，color にアライメント済み） | `/head_camera/aligned_depth_to_color/image_raw` |
+
+出力:
+
+| 役割 | トピック |
+| --- | --- |
+| 6DoF 姿勢 | `/pose_estimation/output` |
+
+全 ComposableNode は `component_container_mt` 1 つの上で動作する．
+
+## 13.5 動作確認（別ターミナル）
+
+```bash
+isaac-ros activate
+ros2 topic list | grep pose_estimation
+ros2 topic echo /pose_estimation/output --once
+```
+
+## 13.6 現時点で未整理な点
+
+* TF: RViz の Fixed Frame `tf_camera` と FoundationPose の object frame（既定 `fp_object`）の関係がまだ張られていない
+* CameraInfo の解像度と実画像（1280×720）の一致確認が未了
+* メッシュは Quickstart の Mustard のまま（実対象物に差し替えていない）
+
+構成・調査の詳細は [catch-up 記録](../catch-up/pose_estimation.md) を参照．

@@ -1,5 +1,17 @@
 # isaac_ros_pose_estimation キャッチアップ結果
 
+> **時点**: 2026-09-25（本書は調査時点の認識をそのまま残したスナップショットです。再現手順は [setup](../setup/pose_estimation.md) が正）
+> **環境**: ホスト Ubuntu 22.04 / RTX 3090 × 2 / Driver 610.57.04，コンテナ Ubuntu 24.04 / ROS 2 Jazzy / Isaac ROS 4.6
+> **章の読み方**
+> * 1〜3: 環境と Git リポジトリ構成
+> * 4〜10: Isaac ROS 4.6 と FoundationPose のアーキテクチャ（Component 構成・GPU メモリ・タイムアウト）
+> * 11〜18: FoundationPoseNode・パラメータ・Tracking
+> * 19〜28: Launch 構成・アセット・TensorRT・Quickstart bag
+> * 29〜34: 実カメラ入力への移植と未整合
+> * 35〜40: 到達点・次の TODO・一枚まとめ
+>
+> 本書中に登場する `docs/pose_estimation.md` は，現在 `docs/setup/pose_estimation.md` へ移動している。
+
 ## 1. 全体構成
 
 現在の環境では、Isaac ROS 4.6 をベースに `isaac_ros_pose_estimation` を調査・導入している。
