@@ -245,6 +245,7 @@ mkdir -p isaac_ros-dev/src/custom_<theme>_bringup/launch
 | `apt` でパッケージが入らない | 公式例は Ubuntu 22.04 / Humble 前提の記載が多い | `ros-jazzy-...` と `release-4.6`、noble 向けリポジトリに置き換える |
 | FoundationPose 起動直後に `cudaErrorUnsupportedPtxVersion` でクラッシュ | ソースビルドが既定の sm_75 で行われ、新しめの GPU（例: RTX 5080 / sm_120）で SASS が実行できない | `colcon build --cmake-args -DCMAKE_CUDA_ARCHITECTURES=120` で再ビルド。`cuobjdump --list-elf` で sm_120 cubin を確認 |
 | 出力トピックが見つからない | quickstart の launch は FoundationPose 出力を `/output` に remap する。TRT 往復は `tensor_pub`=リクエスト / `tensor_sub`=結果 | `ros2 node info` で実際の解決後トピック名を確認する（詳細は setup 12 章） |
+| `Sampling produced 0 poses` が全フレーム続く（検出は出ている） | 初期仮説グリッド数（icosphere頂点 × 360°/step = 既定252）が `max_hypothesis` を超えると sampler が空を返す仕様 | `max_hypothesis` をグリッド数以上にするか、`grid_n_views` / `grid_inplane_step_deg`（setup 5 章）でグリッドを減らす。両者は連動 |
 
 ---
 

@@ -1559,3 +1559,54 @@ Camera ───────────┼── Mask生成
 
 - quickstart: `/output` に Detection3DArray が 0.5 Hz、Mustard の姿勢（例: xyz ≈ [-0.45, 0.12, 0.80]）が確認できた。
 - 自作 launch `head_camera_foundationpose.launch.py`: 全 15 ComposableNode が起動し、`/head_camera/color/image_raw` 38 Hz・`aligned_depth` 35 Hz で接続確認済み。`/detections_output` は流れるが `detections: []`（カメラ前に被写体がないため）。被写体を置いた状態での最終検証は未実施。
+
+---
+
+# 41. VRAM 削減・推論高速化（2026-10-29）
+
+## 問題
+
+FoundationPose パイプライン単体のプロセスが RTX 5080（16 GB）で **10.3 GiB** を消費し、Isaac Sim（約 3.7 GiB）と同居すると総使用量 14.3 GiB で限界近傍だった。処理も 0.5 Hz と遅い。
+
+## 切り分け（nvidia-smi プロセス別 + TensorRT の MemUsageChange ログ）
+
+| 項目 | 削減前 |
+| --- | --- |
+| score TRT 実行コンテキスト | **2215 MiB**（FP32・max batch 252） |
+| refine TRT 実行コンテキスト | **1034 MiB**（FP32・max batch 42） |
+| rtdetr TRT 実行コンテキスト | 68 MiB |
+| FP ノード NITROS プール（147 MiB×4 + 24 MiB×8） | 約 790 MiB |
+| TensorRTNode メモリプール（8.8 MiB×40 × 3 ノード） | 約 1.0 GiB |
+| CUDA コンテキスト・レンダラバッファ等 | 残り約 5 GiB |
+
+**最大の犯人は score / refine の TensorRT エンジン**。ch.5 の trtexec コマンドに `--fp16` が無く FP32 ビルドだった（`enable_fp16=True` は FP32 エンジンでは無効）。FP16 は NVIDIA 公式エンジンビルドの標準構成。
+
+## 実施内容
+
+1. **エンジン再ビルド**: `--fp16` + 実バッチに合わせた min/opt/max shapes（score 126、refine 21）
+2. **仮説数 252 → 126**: ただし初期仮説はグリッド総当たり（42view × 60°step = 252 固定）で生成され、グリッド数 > `max_hypothesis` だと sampler が空を返す（`Sampling produced 0 poses`）ことが判明。sampler を改造し `grid_n_views` / `grid_inplane_step_deg` を yaml で設定可能にした（42view × 120° = 126）。
+3. **`refine_iterations` 3 → 2**（launch で指定）
+4. **TensorRTNode `memory_pool_num_blocks`**: rtdetr 16 / refine 12 / score 24（既定 40 から縮小）
+5. **VRAM プローブ**: `foundationpose_node.cpp` に `cudaMemGetInfo` による one-shot ログ（ノード初期化後・初フレーム後）を追加
+
+## 結果（RTX 5080、Isaac Sim 同居下の実測）
+
+| 指標 | 前 | 後 |
+| --- | --- | --- |
+| プロセス VRAM | 10338 MiB | **6368 MiB**（-38%） |
+| GPU 全体 | 14279 MiB | 10072 MiB |
+| 姿勢出力レート | 0.52 Hz | **約 2.9 Hz**（約 5.6 倍） |
+| score TRT コンテキスト | 2215 MiB | 369 MiB |
+| refine TRT コンテキスト | 1034 MiB | 164 MiB |
+| score 推論（trtexec） | 252 ms @252 FP32 | 29 ms @126 FP16 |
+| refine 推論（trtexec） | 46 ms @42 FP32 | 6 ms @21 FP16 |
+
+姿勢は位置安定（バラつき 2 cm 未満）。軸周り 180° 反転の姿勢が時々選択されるが、これは Mustard の円筒対称に対する `symmetry_axes` 未指定が原因で、グリッド削減とは無関係（位置推定は depth ベースで安定）。
+
+## 関連ファイル
+
+- `isaac_ros-dev/src/isaac_ros_pose_estimation/isaac_ros_foundationpose/config/foundationpose_model_config.yaml`（max_hypothesis / grid_* ）
+- 同 `src/foundationpose_node.cpp` / `include/.../foundationpose_node.hpp`（grid パラメータ読込、VRAM プローブ）
+- 同 `src/foundationpose_impl/pose_sampler.cpp` / `include/.../pose_sampler.hpp`（グリッド密度のパラメータ化）
+- `isaac_ros-dev/src/custom_pose_bringup/launch/head_camera_foundationpose.launch.py`（max_batch_size、memory_pool_num_blocks、refine_iterations）
+- `docs/setup/pose_estimation.md` ch.5（fp16 + shapes 手順）

@@ -219,6 +219,22 @@ source install/setup.bash
 
 FoundationPose は ONNX モデルを直接使用するのではなく，TensorRT Engine（`.plan`）を使用する．
 
+> **重要: `--fp16` を必ず付ける**
+> FP32ビルドだと score の実行コンテキストだけで約2.2 GiBのVRAMを確保し，推論も遅い（RTX 5080実測: score@batch252 FP32 ≈ 252 ms）．
+> NVIDIA公式のFoundationPoseエンジンもFP16ビルドが標準であり，精度への実用上の問題は確認されていない．
+>
+> **shapes と `max_hypothesis` の関係**:
+> `config/foundationpose_model_config.yaml` の `max_hypothesis`（既定 126）に対し，
+> scoreエンジンのバッチ上限 ≧ `max_hypothesis`，refineエンジンのバッチ上限 ≧ `max_hypothesis / 6`
+> （内部で6バッチへ分割されるため）である必要がある．
+> 変更時はエンジンの再ビルドとlaunch側の `max_batch_size` を併せて変更すること．
+> （`max_hypothesis` は6の倍数にすること．内部で6の倍数へpadされるため）
+>
+> なお，初期仮説はグリッド総当たり（icosphere頂点数 × 360°/`grid_inplane_step_deg`）で生成され，
+> その数が `max_hypothesis` を超えると姿勢推定は全フレーム失敗する（`Sampling produced 0 poses`）．
+> 既定は 42view × 60deg step = 252仮説．本設定では 42view × 120deg step = 126仮説へ削減している．
+> `grid_n_views` / `grid_inplane_step_deg` は同一yamlで調整可能（ソース改造済み）．
+
 ## 5.1 Refine Model
 
 ### コンテナ内で実行
@@ -227,10 +243,13 @@ FoundationPose は ONNX モデルを直接使用するのではなく，TensorRT
 /usr/src/tensorrt/bin/trtexec \
   --onnx=${ISAAC_ROS_WS}/isaac_ros_assets/models/foundationpose/refine_model.onnx \
   --saveEngine=${ISAAC_ROS_WS}/isaac_ros_assets/models/foundationpose/refine_trt_engine.plan \
+  --fp16 \
   --minShapes=input1:1x160x160x6,input2:1x160x160x6 \
-  --optShapes=input1:1x160x160x6,input2:1x160x160x6 \
-  --maxShapes=input1:42x160x160x6,input2:42x160x160x6
+  --optShapes=input1:21x160x160x6,input2:21x160x160x6 \
+  --maxShapes=input1:21x160x160x6,input2:21x160x160x6
 ```
+
+RTX 5080実測（trtexec, FP16, batch21）: GPU compute ≈ 6 ms（FP32 batch42で約46 ms）．
 
 ## 5.2 Score Model
 
@@ -238,10 +257,13 @@ FoundationPose は ONNX モデルを直接使用するのではなく，TensorRT
 /usr/src/tensorrt/bin/trtexec \
   --onnx=${ISAAC_ROS_WS}/isaac_ros_assets/models/foundationpose/score_model.onnx \
   --saveEngine=${ISAAC_ROS_WS}/isaac_ros_assets/models/foundationpose/score_trt_engine.plan \
+  --fp16 \
   --minShapes=input1:1x160x160x6,input2:1x160x160x6 \
-  --optShapes=input1:1x160x160x6,input2:1x160x160x6 \
-  --maxShapes=input1:252x160x160x6,input2:252x160x160x6
+  --optShapes=input1:126x160x160x6,input2:126x160x160x6 \
+  --maxShapes=input1:126x160x160x6,input2:126x160x160x6
 ```
+
+RTX 5080実測（trtexec, FP16, batch126）: GPU compute ≈ 29 ms（FP32 batch252で約252 ms）．
 
 ### 作成後
 
@@ -252,6 +274,34 @@ ${ISAAC_ROS_WS}/isaac_ros_assets/models/foundationpose/
 ├── score_model.onnx
 └── score_trt_engine.plan
 ```
+
+## 5.3 仮説グリッド密度のパラメータ化（公式パッケージへのパッチ）
+
+初期仮説の生成数は `makeRotationGrid()` の引数がハードコード（42view × 60° = 252）で，
+この数が `max_hypothesis` を超えると sampler が空を返す．仮説数を減らすにはここも連動させる必要がある．
+`src/isaac_ros_pose_estimation`（Git管理外）へ以下の小さなパッチを当てる．
+
+1. `include/isaac_ros_foundationpose/foundationpose_impl/pose_sampler.hpp` — `PoseSamplerParams` に追加:
+
+```cpp
+unsigned int grid_n_views{40};
+double grid_inplane_step_deg{60.0};
+```
+
+2. `src/foundationpose_impl/pose_sampler.cpp` — `sample()` 内:
+
+```cpp
+auto ob_in_cams = makeRotationGrid(
+  all_symmetry_axes, params_.fixed_axis_angles,
+  params_.grid_n_views, params_.grid_inplane_step_deg);
+```
+
+3. `src/foundationpose_node.cpp` — yaml パース部（`max_hypothesis` の直後）で
+   `grid_n_views` / `grid_inplane_step_deg`（任意キー，既定 40 / 60.0）を読み，
+   `sampler_params` へ代入する．ノードヘッダにメンバ追加も忘れずに．
+
+設定値（`config/foundationpose_model_config.yaml`）: `grid_n_views: 40`，
+`grid_inplane_step_deg: 120.0` → 42 × 3 = 126 仮説（`max_hypothesis: 126` と一致）．
 
 ---
 
@@ -480,6 +530,9 @@ cudaErrorUnsupportedPtxVersion  (depth_to_xyz_map 内)
 - quickstart の launch は FoundationPose の出力を `/pose_estimation/output` ではなく **`/output`** に remap している。トピック確認時は注意（自作 launch は `/pose_estimation/output` に remap 済み）。
 - `/detections_output` が流れていても `detections: []` なら、RT-DETR が物体を見ていない（カメラ前に被写体がない）だけ。姿勢出力が来ないときはまずこれを疑う。
 - RTX 5080 上の実測（trtexec）: score @batch252 ≈ 252 ms、refine @batch42 ≈ 46 ms。1 フレーム（252 poses・refine 3 回）で約 1.9 s → 約 0.5 Hz。`Processing timeout, releasing gate`（5 s ウォッチドッグ）は処理がほぼ常時ビジーだと周期に出るが、処理自体は完走している。
+- **VRAM 削減・高速化（2026-10-29 実施）**: エンジンを `--fp16` + 実バッチに合わせた shapes で再ビルド（ch.5）、`max_hypothesis` 252 → 126（グリッドも `grid_inplane_step_deg: 120` で連動削減。`grid_n_views` / `grid_inplane_step_deg` は sampler を改造して yaml 化済み）、`refine_iterations` 3 → 2、TensorRTNode の `memory_pool_num_blocks` を実需サイズへ縮小。効果（RTX 5080、Isaac Sim 同居下）: パイプラインプロセス 10338 → **6368 MiB**、姿勢出力 0.52 → **約 2.9 Hz**、TRTコンテキスト 3605 → 827 MiB（score 2215→369、refine 1034→164）。
+- `max_hypothesis` を下げても**初期仮説グリッド数は減らない**（既定 42view × 60deg step = 252 固定）。グリッド数 > `max_hypothesis` だと sampler が即 return して全フレーム `Sampling produced 0 poses` になる。必ず `grid_n_views` / `grid_inplane_step_deg` と一緒に調整する（生成数 = 頂点数 × 360/step ≦ `max_hypothesis`）。
+- 円筒対称の物体（Mustard 等）は `symmetry_axes` 未指定だと軸周り180°反転の姿勢がフレームごとに切り替わることがある。位置は安定しており、見た目の揺れは物体の対称性が原因。
 
 # 13. 実カメラ入力（custom_pose_bringup）
 
