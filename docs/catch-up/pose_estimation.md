@@ -1458,7 +1458,7 @@ FoundationPose Object Frame
 ┌─────────────────────────────────────────────────────────────┐
 │                    Host / RTX 3090 × 2                      │
 │                                                             │
-│  /home/<user>/isaac_ros_ws/                  │
+│  /home/<user>/isaac_ros_ws/                                 │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │ Docker: isaac-ros-4.6-base                            │  │
@@ -1524,3 +1524,38 @@ Camera ───────────┼── Mask生成
 という複数のIsaac ROS Componentを組み合わせたパイプラインになっている。
 
 そのため，現在の実環境への移植では，**FoundationPose本体だけでなく，RT-DETR，入力Topic，CameraInfo，RGB-Depthアライメント，TFの5点を合わせて確認する必要がある**。
+
+---
+
+## 付録（2026-10-29）: RTX 5080 環境での再キャッチアップ
+
+本書本文は RTX 3090 環境（`/home/<user>/...`）時点のスナップショットだが，2026-10-29 にホスト更改新後（RTX 5080 / Driver 580.126.09 / CUDA 13.2 / TensorRT 10.16.1）にキャッチアップした結果を付記する。再現手順は [setup](../setup/pose_estimation.md) 側へ反映済み。
+
+### 実施内容
+
+- `src/isaac_ros_pose_estimation` を release-4.6 で再クローンし、ソースビルド（混合構成: RT-DETR と Isaac ROS コアは apt バイナリ）。
+- NGC アセット・ONNX を再取得し、trtexec で `.plan` を再生成（score max batch 252 / refine max batch 42、いずれも PASSED）。
+- quickstart bag でパイプライン全体を再検証。
+
+### ハマった点（本文の認識に上書きするもの）
+
+1. **CUDA アーキテクチャ不整合でクラッシュ**
+   - `colcon build` に `-DCMAKE_CUDA_ARCHITECTURES=120` を渡さない限り、FoundationPose の CUDA カーネルは sm_75 でビルドされる（CMakeLists は arch 未指定）。
+   - RTX 5080（sm_120）では `depth_to_xyz_map` で `cudaErrorUnsupportedPtxVersion` が発生。`cuobjdump --list-elf libfoundationpose_pipeline.so` に `sm_120.cubin` が出れば解決。
+2. **推論速度はボトルネックではなかった**
+   - 5080 実測: score @252 ≈ 252 ms, refine @42 ≈ 46 ms。1 フレーム（252 poses, refine 3 iter）≈ 1.9 s → 出力 ≈ 0.5 Hz。
+   - 本文 7 章あたりの「GPU 負荷が重い」という懸念は、5080 では成立しない。
+3. **quickstart の出力トピックは `/output`**
+   - launch フラグメントが FoundationPoseNode の出力を `/output` に remap している。`/pose_estimation/output` を期待して探すと「出ていない」と誤認する。
+4. **`tensor_pub` / `tensor_sub` の向き**
+   - `<ns>/tensor_pub` = FP → TRT のリクエスト、`<ns>/tensor_sub` = TRT → FP の結果。命名とデータフローが逆に見える罠。
+5. **`Processing timeout, releasing gate` は常時ビジーの副産物**
+   - processFrame が syncCallback ごとに起動し duty cycle ほぼ 100% だと、5 s ウォッチドッグが周期性に警告を出す。処理自体は完走しており、この警告だけで停止はしない。
+6. **運用メモ**
+   - `docker exec` 経由の `pkill -f <launch名>` は exec 自身にマッチして自爆する（exit 143）。PID 指定 kill または `[b]racket` 回避を使う。
+   - gdb attach はホストの `ptrace_scope=1` で不可。切り分けはソースへの一時ログ挿入が現実的。
+
+### 到達点（2026-10-29 時点）
+
+- quickstart: `/output` に Detection3DArray が 0.5 Hz、Mustard の姿勢（例: xyz ≈ [-0.45, 0.12, 0.80]）が確認できた。
+- 自作 launch `head_camera_foundationpose.launch.py`: 全 15 ComposableNode が起動し、`/head_camera/color/image_raw` 38 Hz・`aligned_depth` 35 Hz で接続確認済み。`/detections_output` は流れるが `detections: []`（カメラ前に被写体がないため）。被写体を置いた状態での最終検証は未実施。

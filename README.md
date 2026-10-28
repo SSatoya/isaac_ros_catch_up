@@ -111,16 +111,18 @@ Git の管理範囲は [.gitignore](./.gitignore) で決めています。目安
 ### 4.1 ホスト側（1 回だけ）
 
 ```bash
+cd $HOME
+git clone https://github.com/SSatoya/isaac_ros_catch_up isaac_ros_ws
+
+
 # (1) ワークスペースの位置を環境変数で教える（container.sh が使用する）
 export ISAAC_ROS_WS="$HOME/isaac_ros_ws/isaac_ros-dev"
 echo 'export ISAAC_ROS_WS="$HOME/isaac_ros_ws/isaac_ros-dev"' >> ~/.bashrc
 
 # (2) 個人設定を雛形から作る（IMAGE_NAME / CONTAINER_NAME / ROS_DOMAIN_ID）
 #     .env が既にある場合はスキップしてよい
+cd isaac_ros_ws
 cp .env.example .env
-
-# (3) ワークスペースの骨格を作る
-mkdir -p "$ISAAC_ROS_WS/src"
 ```
 
 > 設定済みかの確認: `echo $ISAAC_ROS_WS` が `/home/<user>/isaac_ros_ws/isaac_ros-dev` を返すなら (1) は不要。
@@ -241,6 +243,8 @@ mkdir -p isaac_ros-dev/src/custom_<theme>_bringup/launch
 | 他マシン・他ユーザと混線する、ノードが見えない | `ROS_DOMAIN_ID` と RMW の不一致 | `.env` の `ROS_DOMAIN_ID` を揃える。イメージは `rmw_fastrtps_cpp` + `dds_cfg/fastdds.xml`（UDP）で統一している |
 | Depth が効かない・姿勢が暴れる | Depth が 32FC1 で RGB 座標系にアライメントされていない | RealSense 等では aligned depth トピックを使い、Depth の単位（m）を確認 |
 | `apt` でパッケージが入らない | 公式例は Ubuntu 22.04 / Humble 前提の記載が多い | `ros-jazzy-...` と `release-4.6`、noble 向けリポジトリに置き換える |
+| FoundationPose 起動直後に `cudaErrorUnsupportedPtxVersion` でクラッシュ | ソースビルドが既定の sm_75 で行われ、新しめの GPU（例: RTX 5080 / sm_120）で SASS が実行できない | `colcon build --cmake-args -DCMAKE_CUDA_ARCHITECTURES=120` で再ビルド。`cuobjdump --list-elf` で sm_120 cubin を確認 |
+| 出力トピックが見つからない | quickstart の launch は FoundationPose 出力を `/output` に remap する。TRT 往復は `tensor_pub`=リクエスト / `tensor_sub`=結果 | `ros2 node info` で実際の解決後トピック名を確認する（詳細は setup 12 章） |
 
 ---
 

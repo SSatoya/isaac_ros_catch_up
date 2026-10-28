@@ -1,7 +1,8 @@
 # Isaac ROS FoundationPose セットアップ手順
 
-> **状態**: Quickstart は動作確認済み（2026-09）／実カメラ入力は調整中
+> **状態**: Quickstart は姿勢推定出力まで動作確認済み（2026-10 / RTX 5080）・自作 launch（ch.13）もノード起動・接続確認済み
 > **対象**: Isaac ROS 4.6 / ROS 2 Jazzy / イメージ `isaac-ros-4.6-base`（Ubuntu 24.04）
+> **GPU**: RTX 5080（sm_120）。ソースビルド時は ch.4 のとおり CUDA アーキテクチャ指定が必須
 > **関連**: 環境・構成の全体像は [ルート README](../README.md)、仕組みの調査記録は [catch-up](../catch-up/pose_estimation.md)
 
 **この文書の読み方**
@@ -189,9 +190,20 @@ rosdep update && rosdep install --from-paths ${ISAAC_ROS_WS}/src/isaac_ros_pose_
 ```
 
 - ソースコードからパッケージをビルド
+
+> **重要**: `CMakeLists.txt` が CUDA アーキテクチャを指定していないため、この指定がないとデフォルトの **sm_75** でビルドされる。RTX 5080（sm_120）では sm_75 の SASS は実行できず、`depth_to_xyz_map` で `cudaErrorUnsupportedPtxVersion` に遭遇する（2026-10 実測）。GPU に合わせて `-DCMAKE_CUDA_ARCHITECTURES` を渡すこと。
+
 ```bash
 cd ${ISAAC_ROS_WS}/ && \
-   colcon build --symlink-install --packages-up-to isaac_ros_foundationpose --base-paths ${ISAAC_ROS_WS}/src/isaac_ros_pose_estimation/isaac_ros_foundationpose
+   colcon build --symlink-install --packages-up-to isaac_ros_foundationpose --base-paths ${ISAAC_ROS_WS}/src/isaac_ros_pose_estimation/isaac_ros_foundationpose \
+   --cmake-args -DCMAKE_CUDA_ARCHITECTURES=120
+```
+
+ビルド後に SASS が埋め込まれている確認できる:
+
+```bash
+cuobjdump --list-elf install/isaac_ros_foundationpose/lib/libfoundationpose_pipeline.so
+# → libfoundationpose_pipeline.1.sm_120.cubin が並んでいれば OK
 ```
 
 - ROSワークスペースのソースコード：
@@ -446,6 +458,28 @@ FoundationPoseではRGB画像とDepth画像が同一座標系で対応してい�
 `.plan` ファイルはTensorRTの環境に依存するため，別GPU・別TensorRT環境で作成したEngineをそのまま使用できない場合がある．
 
 そのため，実際にFoundationPoseを動かすGPU環境でEngineを生成する．
+
+### CUDAアーキテクチャ（2026-10 / RTX 5080 で再現）
+
+ソースビルド時に `-DCMAKE_CUDA_ARCHITECTURES=120` を忘れると sm_75 の cubin のみが埋め込まれ，実行時に
+
+```text
+cudaErrorUnsupportedPtxVersion  (depth_to_xyz_map 内)
+```
+
+で落ちる。`cuobjdump --list-elf install/.../libfoundationpose_pipeline.so` で即確認できる（ch.4 参照）。
+
+### 新環境でのセットアップでハマった点（2026-10, RTX 5080）
+
+- ベースイメージ `isaac-ros-4.6-base` には CUDA Toolkit / TensorRT が入っていない。`rosdep install` が `nvidia-cuda-toolkit` 系と TensorRT を apt で入れてくれる（CUDA 13.2 / TensorRT 10.16 が入った）。
+- NGC からのアセット取得（ch.2 / ch.6）で EULA 同意プロンプトは `yes |` をパイプして流す（対話 TTY がない exec では止まる）。
+- root でクローンした `src/isaac_ros_pose_estimation` はホストユーザーに `chown -R 1001:1001` しておかないと編集不可。
+- `custom_pose_bringup` の `CMakeLists.txt` に存在しない `config` ディレクトリの `install(DIRECTORY ...)` があり、ビルドが通らなかった（削除して解消）。
+- `docker exec` 越しの `pkill -f "<launch名>"` は **exec 自身の cmdline にもマッチして自爆（exit 143）する**。`pgrep -f "[l]aunch名]"` の bracket 回避か、PID を直接指定して kill する。
+- TensorRTNode のトピック名は直感と逆で、`<ns>/tensor_pub` = **リクエスト**（FP → TRT）、`<ns>/tensor_sub` = **結果**（TRT → FP）。
+- quickstart の launch は FoundationPose の出力を `/pose_estimation/output` ではなく **`/output`** に remap している。トピック確認時は注意（自作 launch は `/pose_estimation/output` に remap 済み）。
+- `/detections_output` が流れていても `detections: []` なら、RT-DETR が物体を見ていない（カメラ前に被写体がない）だけ。姿勢出力が来ないときはまずこれを疑う。
+- RTX 5080 上の実測（trtexec）: score @batch252 ≈ 252 ms、refine @batch42 ≈ 46 ms。1 フレーム（252 poses・refine 3 回）で約 1.9 s → 約 0.5 Hz。`Processing timeout, releasing gate`（5 s ウォッチドッグ）は処理がほぼ常時ビジーだと周期に出るが、処理自体は完走している。
 
 # 13. 実カメラ入力（custom_pose_bringup）
 
