@@ -477,6 +477,10 @@ def generate_launch_description():
             ],
 
             'force_engine_update': False,
+
+            # RT-DETR入力は1x3x640x640 fp32で約5MiB。
+            # 既定の40ブロックは大きすぎるため縮小（VRAM削減）。
+            'memory_pool_num_blocks': 16,
         }],
     )
 
@@ -661,8 +665,13 @@ def generate_launch_description():
 
             'verbose': False,
 
-            # FoundationPose core launchと同じ値。
-            'max_batch_size': 42,
+            # 仮説数(126)/6 = 21。
+            # refine_trt_engine.planのmaxShapesと一致させること。
+            'max_batch_size': 21,
+
+            # メモリプールを実需に応じたサイズへ縮小（VRAM削減）。
+            # TensorRTNode既定の40ブロック(8.8MiBx40=約350MiB)は大きすぎる。
+            'memory_pool_num_blocks': 12,
         }],
         remappings=[
             ('tensor_pub',
@@ -719,8 +728,13 @@ def generate_launch_description():
 
             'verbose': False,
 
-            # FoundationPose core launchと同じ値。
-            'max_batch_size': 252,
+            # 仮説数(126)と一致させる。
+            # score_trt_engine.planのmaxShapesと一致させること。
+            'max_batch_size': 126,
+
+            # score入力は126x160x160x6 fp32で約77MiB x2本のため、
+            # 24ブロック(8.8MiBx24=約210MiB)を確保。
+            'memory_pool_num_blocks': 24,
         }],
         remappings=[
             ('tensor_pub',
@@ -779,6 +793,11 @@ def generate_launch_description():
                 'input_tensor1',
                 'input_tensor2',
             ],
+
+            # Refine networkの反復回数（既定3）。
+            # 1回あたりのrefine呼び出しが6バッチあるため、
+            # 3->2でフレームあたり約12回のTRT呼び出しを削減。
+            'refine_iterations': 2,
         }],
         remappings=[
             # Depth
