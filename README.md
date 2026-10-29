@@ -43,12 +43,13 @@ RGB + Depth + CameraInfo
 | 実カメラのトピック（`/head_camera/*`）を FoundationPose に流す launch を持つ | `isaac_ros-dev/src/custom_pose_bringup/` |
 | TensorRT Engine（`.plan`）の生成手順が残っている | 手順書 5 章 |
 | 仕組み・はまりどころの調査記録が残っている | [docs/catch-up/pose_estimation.md](./docs/catch-up/pose_estimation.md) |
+| XR テレオペ（XR 姿勢 → ROS トピック）を Quest 3 実機（コントローラ / ハンドトラッキング両モード）で動作させている | [docs/setup/teleop.md](./docs/setup/teleop.md) |
 
 **まだできていないこと**（2026-10 時点）
 
 * 実カメラ入力での安定動作（TF・CameraInfo・同期の調整が未完）
 * 実対象物の 3D メッシュでの推定
-* Pose Estimation 以外のテーマ
+* Teleop の手元ロボット実機への適用（XR → トピックまでは Quest 3 実機含め到達済み）
 
 ---
 
@@ -57,9 +58,9 @@ RGB + Depth + CameraInfo
 | 項目 | 値 |
 | --- | --- |
 | ホスト OS | Ubuntu 22.04.5 LTS |
-| GPU | NVIDIA GeForce RTX 3090 × 2（24 GB） |
-| NVIDIA Driver (KMD) | 610.57.04 |
-| CUDA UMD | 13.3 |
+| GPU | NVIDIA GeForce RTX 5080（16 GB） |
+| NVIDIA Driver (KMD) | 580.126.09 |
+| CUDA UMD | 13.0 |
 | Docker | 28.x（NVIDIA Container Toolkit 必須） |
 | コンテナイメージ | `isaac-ros-4.6-base`（Ubuntu 24.04 / ROS 2 Jazzy / Isaac ROS CLI 4.6） |
 
@@ -203,6 +204,7 @@ ros2 launch custom_pose_bringup head_camera_foundationpose.launch.py
 | テーマ | 手順書 | 調査記録 | 状態 |
 | --- | --- | --- | --- |
 | Pose Estimation（FoundationPose） | [setup](./docs/setup/pose_estimation.md) | [catch-up](./docs/catch-up/pose_estimation.md) | Quickstart 動作確認済み／実カメラ入力は調整中 |
+| Teleop（XR テレオペ） | [setup](./docs/setup/teleop.md) | [catch-up](./docs/catch-up/teleop.md) | Quest 3 実機（コントローラ / `hand_teleop` 両モード）で動作確認済み |
 
 <!-- 新しいテーマを足したらここへ 1 行追加する -->
 

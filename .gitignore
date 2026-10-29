@@ -3,6 +3,7 @@ isaac_ros-dev/build/
 isaac_ros-dev/install/
 isaac_ros-dev/log/
 isaac_ros-dev/src/isaac_ros*
+isaac_ros-dev/.cloudxr/
 
 __pycache__
 

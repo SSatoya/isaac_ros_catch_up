@@ -16,6 +16,8 @@
 - **setup** は「壊れたら直す」運用文書です。コマンドが変わったら本文も更新します。
 - **catch-up** は「調べた時点の認識を残す」文書です。後から書き換えず、冒頭の時点情報を更新します。
 - 1 テーマにつき基本 2 文書（setup + catch-up）。補足は同じテーマ名で `docs/catch-up/<theme>_<topic>.md` のように増やします。
+- **必ず読まなくてもよい部分**（エラー対処表・診断手順・完了済み項目・ディレクトリツリーなど）は
+  `<details><summary> ... </summary> ... </details>` で折り畳む。手順の本体（フォアパス）は開いたままにする。
 
 ---
 
@@ -24,6 +26,7 @@
 | テーマ | 対象パッケージ | 手順書 | 調査記録 | 状態（2026-10 時点） |
 | --- | --- | --- | --- | --- |
 | `pose_estimation` | `isaac_ros_foundationpose`<br>`isaac_ros_rtdetr` | [setup](./setup/pose_estimation.md) | [catch-up](./catch-up/pose_estimation.md) | Quickstart は動作確認済み。実カメラ（`/head_camera/*`）入力の bringup は調整中 |
+| `teleop` | `isaac_ros_teleop`<br>`isaac_teleop_core` | [setup](./setup/teleop.md) | [catch-up](./catch-up/teleop.md) | Quest 3 実機（コントローラ / ハンドトラッキング両モード）で動作確認済み |
 
 <!-- 新しいテーマを追加したらこの表に 1 行足す -->
 
