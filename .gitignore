@@ -5,6 +5,11 @@ isaac_ros-dev/log/
 isaac_ros-dev/src/isaac_ros*
 isaac_ros-dev/.cloudxr/
 
+# ロボット固有(URDF・关节名・トピック映射)は外部流出禁止:git に入れない
+isaac_ros-dev/src/custom_teleop_bringup/
+*.urdf
+*.xacro
+
 __pycache__
 
 .env
